@@ -9,8 +9,8 @@
 #include <filesystem>
 #include "common.h"
 
-constexpr uint32_t windowStartWidth = 400;
-constexpr uint32_t windowStartHeight = 400;
+constexpr uint32_t windowStartWidth = 640;
+constexpr uint32_t windowStartHeight = 480;
 
 struct AppContext {
     SDL_Window* window;
