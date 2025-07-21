@@ -1,48 +1,7 @@
 #include "common.h"
 
-int CommonInit(Context* context, SDL_WindowFlags windowFlags)
-{
-	context->Device = SDL_CreateGPUDevice(
-		SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
-		true,
-		NULL);
-
-	if (context->Device == NULL)
-	{
-		SDL_Log("GPUCreateDevice failed");
-		return -1;
-	}
-
-	context->Window = SDL_CreateWindow(context->ExampleName, 640, 480, windowFlags);
-	if (context->Window == NULL)
-	{
-		SDL_Log("CreateWindow failed: %s", SDL_GetError());
-		return -1;
-	}
-
-	if (!SDL_ClaimWindowForGPUDevice(context->Device, context->Window))
-	{
-		SDL_Log("GPUClaimWindow failed");
-		return -1;
-	}
-
-	return 0;
-}
-
-void CommonQuit(Context* context)
-{
-	SDL_ReleaseWindowFromGPUDevice(context->Device, context->Window);
-	SDL_DestroyWindow(context->Window);
-	SDL_DestroyGPUDevice(context->Device);
-}
-
-static const char* BasePath = NULL;
-void InitializeAssetLoader()
-{
-	BasePath = SDL_GetBasePath();
-}
-
 SDL_GPUShader* LoadShader(
+	const char* BasePath,
 	SDL_GPUDevice* device,
 	const char* shaderFilename,
 	Uint32 samplerCount,
@@ -125,73 +84,13 @@ SDL_GPUShader* LoadShader(
 	return shader;
 }
 
-SDL_GPUComputePipeline* CreateComputePipelineFromShader(
-	SDL_GPUDevice* device,
-	const char* shaderFilename,
-	SDL_GPUComputePipelineCreateInfo* createInfo
-) {
-	char fullPath[256];
-	SDL_GPUShaderFormat backendFormats = SDL_GetGPUShaderFormats(device);
-	SDL_GPUShaderFormat format = SDL_GPU_SHADERFORMAT_INVALID;
-	const char* entrypoint;
-
-	if (backendFormats & SDL_GPU_SHADERFORMAT_SPIRV) {
-		SDL_snprintf(fullPath, sizeof(fullPath), "%sContent/Shaders/Compiled/SPIRV/%s.spv", BasePath, shaderFilename);
-		format = SDL_GPU_SHADERFORMAT_SPIRV;
-		entrypoint = "main";
-	}
-	else if (backendFormats & SDL_GPU_SHADERFORMAT_MSL) {
-		SDL_snprintf(fullPath, sizeof(fullPath), "%sContent/Shaders/Compiled/MSL/%s.msl", BasePath, shaderFilename);
-		format = SDL_GPU_SHADERFORMAT_MSL;
-		entrypoint = "main0";
-	}
-	else if (backendFormats & SDL_GPU_SHADERFORMAT_DXIL) {
-		SDL_snprintf(fullPath, sizeof(fullPath), "%sContent/Shaders/Compiled/DXIL/%s.dxil", BasePath, shaderFilename);
-		format = SDL_GPU_SHADERFORMAT_DXIL;
-		entrypoint = "main";
-	}
-	else {
-		SDL_Log("%s", "Unrecognized backend shader format!");
-		return NULL;
-	}
-
-	size_t codeSize;
-	void* code_data = SDL_LoadFile(fullPath, &codeSize);
-	if (code_data == NULL)
-	{
-		SDL_Log("Failed to load compute shader from disk! %s", fullPath);
-		return NULL;
-	}
-
-	const Uint8* code = (const Uint8*)code_data;
-
-	// Make a copy of the create data, then overwrite the parts we need
-	SDL_GPUComputePipelineCreateInfo newCreateInfo = *createInfo;
-	newCreateInfo.code = code;
-	newCreateInfo.code_size = codeSize;
-	newCreateInfo.entrypoint = entrypoint;
-	newCreateInfo.format = format;
-
-	SDL_GPUComputePipeline* pipeline = SDL_CreateGPUComputePipeline(device, &newCreateInfo);
-	if (pipeline == NULL)
-	{
-		SDL_Log("Failed to create compute pipeline!");
-		SDL_free(code_data);
-		return NULL;
-	}
-
-	SDL_free(code_data);
-	return pipeline;
-}
-
-
-SDL_Surface* LoadImage(const char* imageFilename, int desiredChannels)
+SDL_Surface* LoadImage(const char* basePath, const char* imageFilename, int desiredChannels)
 {
 	char fullPath[256];
 	SDL_Surface* result;
 	SDL_PixelFormat format;
 
-	SDL_snprintf(fullPath, sizeof(fullPath), "%sContent/Images/%s", BasePath, imageFilename);
+	SDL_snprintf(fullPath, sizeof(fullPath), "%sContent/Images/%s", basePath, imageFilename);
 
 	result = SDL_LoadBMP(fullPath);
 	if (result == NULL)

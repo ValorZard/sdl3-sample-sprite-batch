@@ -3,6 +3,7 @@
 #define SDL_GPU_EXAMPLES_H
 
 #include <SDL3/SDL.h>
+#include <filesystem>
 
 typedef struct Context
 {
@@ -17,12 +18,9 @@ typedef struct Context
 	float DeltaTime;
 } Context;
 
-int CommonInit(Context* context, SDL_WindowFlags windowFlags);
-void CommonQuit(Context* context);
-
-void InitializeAssetLoader();
 
 SDL_GPUShader* LoadShader(
+	const char* BasePath,
 	SDL_GPUDevice* device,
 	const char* shaderFilename,
 	Uint32 samplerCount,
@@ -30,13 +28,8 @@ SDL_GPUShader* LoadShader(
 	Uint32 storageBufferCount,
 	Uint32 storageTextureCount
 );
-SDL_GPUComputePipeline* CreateComputePipelineFromShader(
-	SDL_GPUDevice* device,
-	const char* shaderFilename,
-	SDL_GPUComputePipelineCreateInfo* createInfo
-);
 
-SDL_Surface* LoadImage(const char* imageFilename, int desiredChannels);
+SDL_Surface* LoadImage(const char* BasePath, const char* imageFilename, int desiredChannels);
 
 // Vertex Formats
 typedef struct PositionVertex

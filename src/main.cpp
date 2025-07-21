@@ -64,16 +64,16 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
         return SDL_Fail();
     }
     
-    // create a renderer
-    /*
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, NULL);
-    if (not renderer){
+    // asset loading
+#if __ANDROID__
+    std::filesystem::path basePath = "";   // on Android we do not want to use basepath. Instead, assets are available at the root directory.
+#else
+    auto basePathPtr = SDL_GetBasePath();
+    if (not basePathPtr) {
         return SDL_Fail();
     }
-    */
-
-    // asset stuff
-    InitializeAssetLoader();
+    const std::filesystem::path basePath = basePathPtr;
+#endif
 
     // SDL_GPU stuff
     auto device = SDL_CreateGPUDevice(
@@ -121,6 +121,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 
     // Create the shaders
     SDL_GPUShader* vertShader = LoadShader(
+        basePath.string().c_str(),
         device,
         "PullSpriteBatch.vert",
         0,
@@ -130,6 +131,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     );
 
     SDL_GPUShader* fragShader = LoadShader(
+		basePath.string().c_str(),
         device,
         "TexturedQuadColor.frag",
         1,
@@ -172,7 +174,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     SDL_ReleaseGPUShader(device, fragShader);
 
     // Load the image data
-    SDL_Surface* imageData = LoadImage("ravioli_atlas.bmp", 4);
+    SDL_Surface* imageData = LoadImage(basePath.string().c_str(), "ravioli_atlas.bmp", 4);
     if (imageData == NULL)
     {
         SDL_Log("Could not load image data!");
@@ -277,15 +279,6 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     SDL_ReleaseGPUTransferBuffer(device, textureTransferBuffer);
     
     // load the font
-#if __ANDROID__
-    std::filesystem::path basePath = "";   // on Android we do not want to use basepath. Instead, assets are available at the root directory.
-#else
-    auto basePathPtr = SDL_GetBasePath();
-     if (not basePathPtr){
-        return SDL_Fail();
-    }
-     const std::filesystem::path basePath = basePathPtr;
-#endif
 
     const auto fontPath = basePath / "Inter-VariableFont.ttf";
     TTF_Font* font = TTF_OpenFont(fontPath.string().c_str(), 36);
