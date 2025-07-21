@@ -39,6 +39,8 @@ endif()
 # Add your sources to the target
 target_sources(${EXECUTABLE_NAME} 
 PRIVATE 
+    src/common.h
+    src/common.cpp
     src/main.cpp
     src/iosLaunchScreen.storyboard
 )
