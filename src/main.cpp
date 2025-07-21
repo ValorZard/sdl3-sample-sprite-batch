@@ -72,6 +72,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     }
     */
 
+    // asset stuff
+    InitializeAssetLoader();
+
     // SDL_GPU stuff
     auto device = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
