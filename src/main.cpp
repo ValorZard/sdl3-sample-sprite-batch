@@ -382,6 +382,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event* event) {
     return SDL_APP_CONTINUE;
 }
 
+static float uCoords[4] = { 0.0f, 0.5f, 0.0f, 0.5f };
+static float vCoords[4] = { 0.0f, 0.0f, 0.5f, 0.5f };
 SDL_AppResult SDL_AppIterate(void *appstate) {
     auto* app = (AppContext*)appstate;
 
@@ -391,16 +393,130 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     auto green = (std::sin(time / 2) + 1) / 2.0 * 255;
     auto blue = (std::sin(time) * 2 + 1) / 2.0 * 255;
     
-    /*
-    SDL_SetRenderDrawColor(app->renderer, red, green, blue, SDL_ALPHA_OPAQUE);
-    SDL_RenderClear(app->renderer);
+    Matrix4x4 cameraMatrix = Matrix4x4_CreateOrthographicOffCenter(
+        0,
+        640,
+        480,
+        0,
+        0,
+        -1
+    );
 
-    // Renderer uses the painter's algorithm to make the text appear above the image, we must render the image first.
-    SDL_RenderTexture(app->renderer, app->imageTex, NULL, NULL);
-    SDL_RenderTexture(app->renderer, app->messageTex, NULL, &app->messageDest);
+    SDL_GPUCommandBuffer* cmdBuf = SDL_AcquireGPUCommandBuffer(app->device);
+    if (cmdBuf == NULL)
+    {
+        SDL_Log("AcquireGPUCommandBuffer failed: %s", SDL_GetError());
+        return SDL_Fail();
+    }
 
-    SDL_RenderPresent(app->renderer);
-    */
+    SDL_GPUTexture* swapchainTexture;
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmdBuf, app->window, &swapchainTexture, NULL, NULL)) {
+        SDL_Log("WaitAndAcquireGPUSwapchainTexture failed: %s", SDL_GetError());
+        return SDL_Fail();
+    }
+
+    if (swapchainTexture != NULL)
+    {
+        // Build sprite instance transfer
+        SpriteInstance* dataPtr = (SpriteInstance*) SDL_MapGPUTransferBuffer(
+            app->device,
+            SpriteDataTransferBuffer,
+            true
+        );
+
+        for (Uint32 i = 0; i < SPRITE_COUNT; i += 1)
+        {
+            Sint32 ravioli = SDL_rand(4);
+            dataPtr[i].x = (float)(SDL_rand(640));
+            dataPtr[i].y = (float)(SDL_rand(480));
+            dataPtr[i].z = 0;
+            dataPtr[i].rotation = SDL_randf() * SDL_PI_F * 2;
+            dataPtr[i].w = 32;
+            dataPtr[i].h = 32;
+            dataPtr[i].tex_u = uCoords[ravioli];
+            dataPtr[i].tex_v = vCoords[ravioli];
+            dataPtr[i].tex_w = 0.5f;
+            dataPtr[i].tex_h = 0.5f;
+            dataPtr[i].r = 1.0f;
+            dataPtr[i].g = 1.0f;
+            dataPtr[i].b = 1.0f;
+            dataPtr[i].a = 1.0f;
+        }
+
+        SDL_UnmapGPUTransferBuffer(app->device, SpriteDataTransferBuffer);
+
+        // Upload instance data
+        SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(cmdBuf);
+        auto transferBufferLocation = SDL_GPUTransferBufferLocation {
+            .transfer_buffer = SpriteDataTransferBuffer,
+                .offset = 0
+        };
+        auto gpuBufferRegion = SDL_GPUBufferRegion{
+            .buffer = SpriteDataBuffer,
+                .offset = 0,
+                .size = SPRITE_COUNT * sizeof(SpriteInstance)
+        };
+
+        SDL_UploadToGPUBuffer(
+            copyPass,
+            &transferBufferLocation,
+            &gpuBufferRegion,
+            true
+        );
+        SDL_EndGPUCopyPass(copyPass);
+
+        // Render sprites
+        auto colorTargetInfo = SDL_GPUColorTargetInfo {
+            .texture = swapchainTexture,
+            .clear_color = { 0, 0, 0, 1 },
+            .load_op = SDL_GPU_LOADOP_CLEAR,
+                .store_op = SDL_GPU_STOREOP_STORE,
+                .cycle = false,
+        };
+
+        SDL_GPURenderPass* renderPass = SDL_BeginGPURenderPass(
+            cmdBuf,
+            &colorTargetInfo,
+            1,
+            NULL
+        );
+
+        SDL_BindGPUGraphicsPipeline(renderPass, RenderPipeline);
+        SDL_BindGPUVertexStorageBuffers(
+            renderPass,
+            0,
+            &SpriteDataBuffer,
+            1
+        );
+        auto textureSamplerBinding = SDL_GPUTextureSamplerBinding {
+            .texture = Texture,
+                .sampler = Sampler
+        };
+
+        SDL_BindGPUFragmentSamplers(
+            renderPass,
+            0,
+            &textureSamplerBinding,
+            1
+        );
+        SDL_PushGPUVertexUniformData(
+            cmdBuf,
+            0,
+            &cameraMatrix,
+            sizeof(Matrix4x4)
+        );
+        SDL_DrawGPUPrimitives(
+            renderPass,
+            SPRITE_COUNT * 6,
+            1,
+            0,
+            0
+        );
+
+        SDL_EndGPURenderPass(renderPass);
+    }
+
+    SDL_SubmitGPUCommandBuffer(cmdBuf);
 
     return app->app_quit;
 }
