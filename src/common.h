@@ -36,6 +36,8 @@ SDL_GPUComputePipeline* CreateComputePipelineFromShader(
 	SDL_GPUComputePipelineCreateInfo* createInfo
 );
 
+SDL_Surface* LoadImage(const char* imageFilename, int desiredChannels);
+
 // Vertex Formats
 typedef struct PositionVertex
 {

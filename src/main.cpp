@@ -14,7 +14,7 @@ constexpr uint32_t windowStartHeight = 400;
 
 struct AppContext {
     SDL_Window* window;
-    SDL_GPUDevice* Device;
+    SDL_GPUDevice* device;
     //SDL_Renderer* renderer;
     //SDL_Texture* messageTex, *imageTex;
     SDL_FRect messageDest;
@@ -22,6 +22,24 @@ struct AppContext {
     Mix_Music* music;
     SDL_AppResult app_quit = SDL_APP_CONTINUE;
 };
+
+static SDL_GPUGraphicsPipeline* RenderPipeline;
+static SDL_GPUSampler* Sampler;
+static SDL_GPUTexture* Texture;
+static SDL_GPUTransferBuffer* SpriteDataTransferBuffer;
+static SDL_GPUBuffer* SpriteDataBuffer;
+
+typedef struct SpriteInstance
+{
+    float x, y, z;
+    float rotation;
+    float w, h, padding_a, padding_b;
+    float tex_u, tex_v, tex_w, tex_h;
+    float r, g, b, a;
+} SpriteInstance;
+
+static const Uint32 SPRITE_COUNT = 8192;
+
 
 SDL_AppResult SDL_Fail(){
     SDL_LogError(SDL_LOG_CATEGORY_CUSTOM, "Error %s", SDL_GetError());
@@ -55,22 +73,205 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     */
 
     // SDL_GPU stuff
-    auto Device = SDL_CreateGPUDevice(
+    auto device = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
         true,
         NULL);
 
-    if (Device == NULL)
+    if (device == NULL)
     {
         SDL_Log("GPUCreateDevice failed");
         return SDL_Fail();
     }
 
-    if (!SDL_ClaimWindowForGPUDevice(Device, window))
+
+    if (!SDL_ClaimWindowForGPUDevice(device, window))
     {
         SDL_Log("GPUClaimWindow failed");
         return SDL_Fail();
     }
+
+    SDL_GPUPresentMode presentMode = SDL_GPU_PRESENTMODE_VSYNC;
+    if (SDL_WindowSupportsGPUPresentMode(
+        device,
+        window,
+        SDL_GPU_PRESENTMODE_IMMEDIATE
+    )) {
+        presentMode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+    }
+    else if (SDL_WindowSupportsGPUPresentMode(
+        device,
+        window,
+        SDL_GPU_PRESENTMODE_MAILBOX
+    )) {
+        presentMode = SDL_GPU_PRESENTMODE_MAILBOX;
+    }
+
+    SDL_SetGPUSwapchainParameters(
+        device,
+        window,
+        SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+        presentMode
+    );
+
+    SDL_srand(0);
+
+    // Create the shaders
+    SDL_GPUShader* vertShader = LoadShader(
+        device,
+        "PullSpriteBatch.vert",
+        0,
+        1,
+        1,
+        0
+    );
+
+    SDL_GPUShader* fragShader = LoadShader(
+        device,
+        "TexturedQuadColor.frag",
+        1,
+        0,
+        0,
+        0
+    );
+
+    SDL_GPUColorTargetDescription colorTargetDescriptions[1] = {SDL_GPUColorTargetDescription {
+                .format = SDL_GetGPUSwapchainTextureFormat(device, window),
+                .blend_state = {
+                    .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+                    .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    .color_blend_op = SDL_GPU_BLENDOP_ADD,
+                    .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
+                    .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                    .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
+                    .enable_blend = true,
+                }
+            } };
+
+    auto graphicsPipelineTargetInfo = SDL_GPUGraphicsPipelineTargetInfo{
+            .color_target_descriptions = colorTargetDescriptions,
+            .num_color_targets = 1,
+    };
+
+    // Create the sprite render pipeline
+    auto graphicsPipelineCreateInfo = SDL_GPUGraphicsPipelineCreateInfo{
+        .vertex_shader = vertShader,
+        .fragment_shader = fragShader,
+        .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+        .target_info = graphicsPipelineTargetInfo,
+    };
+    RenderPipeline = SDL_CreateGPUGraphicsPipeline(
+        device,
+        &graphicsPipelineCreateInfo
+    );
+
+    SDL_ReleaseGPUShader(device, vertShader);
+    SDL_ReleaseGPUShader(device, fragShader);
+
+    // Load the image data
+    SDL_Surface* imageData = LoadImage("ravioli_atlas.bmp", 4);
+    if (imageData == NULL)
+    {
+        SDL_Log("Could not load image data!");
+        return SDL_Fail();
+    }
+
+    auto transferBufferCreateInfo = SDL_GPUTransferBufferCreateInfo{
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = (Uint32) imageData->w * imageData->h * 4
+    };
+
+    SDL_GPUTransferBuffer* textureTransferBuffer = SDL_CreateGPUTransferBuffer(
+        device,
+        &transferBufferCreateInfo
+    );
+
+    Uint8* textureTransferPtr = (Uint8*) SDL_MapGPUTransferBuffer(
+        device,
+        textureTransferBuffer,
+        false
+    );
+    SDL_memcpy(textureTransferPtr, imageData->pixels, imageData->w * imageData->h * 4);
+    SDL_UnmapGPUTransferBuffer(device, textureTransferBuffer);
+
+    // Create the GPU resources
+    auto textureCreateInfo = SDL_GPUTextureCreateInfo {
+        .type = SDL_GPU_TEXTURETYPE_2D,
+            .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+            .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER,
+            .width = (Uint32) imageData->w,
+            .height = (Uint32) imageData->h,
+            .layer_count_or_depth = 1,
+            .num_levels = 1,
+    };
+
+    Texture = SDL_CreateGPUTexture(
+        device,
+        &textureCreateInfo
+    );
+
+    auto samplerCreateInfo = SDL_GPUSamplerCreateInfo{
+        .min_filter = SDL_GPU_FILTER_NEAREST,
+            .mag_filter = SDL_GPU_FILTER_NEAREST,
+            .mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST,
+            .address_mode_u = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            .address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
+            .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE
+    };
+
+    Sampler = SDL_CreateGPUSampler(
+        device,
+        &samplerCreateInfo
+    );
+
+    auto transferBufferCreateInfo2 = SDL_GPUTransferBufferCreateInfo{
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = SPRITE_COUNT * sizeof(SpriteInstance)
+    };
+
+    SpriteDataTransferBuffer = SDL_CreateGPUTransferBuffer(
+        device,
+        &transferBufferCreateInfo2
+    );
+
+    auto bufferCreateInfo = SDL_GPUBufferCreateInfo{
+        .usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+            .size = SPRITE_COUNT * sizeof(SpriteInstance)
+    };
+
+    SpriteDataBuffer = SDL_CreateGPUBuffer(
+        device,
+        &bufferCreateInfo
+    );
+
+    // Transfer the up-front data
+    SDL_GPUCommandBuffer* uploadCmdBuf = SDL_AcquireGPUCommandBuffer(device);
+    SDL_GPUCopyPass* copyPass = SDL_BeginGPUCopyPass(uploadCmdBuf);
+
+    auto textureTransferInfo = SDL_GPUTextureTransferInfo {
+        .transfer_buffer = textureTransferBuffer,
+            .offset = 0, /* Zeroes out the rest */
+    };
+
+    auto textureRegion = SDL_GPUTextureRegion {
+        .texture = Texture,
+            .w = (Uint32) imageData->w,
+            .h = (Uint32) imageData->h,
+            .d = 1
+    };
+
+    SDL_UploadToGPUTexture(
+        copyPass,
+        &textureTransferInfo,
+        &textureRegion,
+        false
+    );
+
+    SDL_EndGPUCopyPass(copyPass);
+    SDL_SubmitGPUCommandBuffer(uploadCmdBuf);
+
+    SDL_DestroySurface(imageData);
+    SDL_ReleaseGPUTransferBuffer(device, textureTransferBuffer);
     
     // load the font
 #if __ANDROID__
@@ -152,6 +353,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     // set up the application data
     *appstate = new AppContext{
        .window = window,
+       .device = device,
        //.renderer = renderer,
        //.messageTex = messageTex,
        //.imageTex = NULL,
@@ -204,7 +406,9 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result) {
     auto* app = (AppContext*)appstate;
     if (app) {
         //SDL_DestroyRenderer(app->renderer);
+        SDL_ReleaseWindowFromGPUDevice(app->device, app->window);
         SDL_DestroyWindow(app->window);
+        SDL_DestroyGPUDevice(app->device);
 
         Mix_FadeOutMusic(1000);  // prevent the music from abruptly ending.
         Mix_FreeMusic(app->music); // this call blocks until the music has finished fading
